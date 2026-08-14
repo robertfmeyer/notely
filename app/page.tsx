@@ -214,6 +214,12 @@ export default function Home() {
 
   useEffect(() => { loopRef.current = loop; }, [loop]);
   useEffect(() => {
+    if (!help) return;
+    const closeGuide = (event: KeyboardEvent) => { if (event.key === "Escape") setHelp(false); };
+    window.addEventListener("keydown", closeGuide);
+    return () => window.removeEventListener("keydown", closeGuide);
+  }, [help]);
+  useEffect(() => {
     const restore = window.setTimeout(() => {
       try {
         const storedSongs = window.localStorage.getItem("notely-songs");
@@ -390,10 +396,25 @@ export default function Home() {
       <section className="workspace">
         <div className="titleRow">
             <div className="titleBlock"><label htmlFor="song-title">Composition name</label><input id="song-title" className="songTitle" value={title} onChange={event => { setSaved(false); setTitle(event.target.value); }} aria-label="Composition title" /><p>Standard tuning / Guitar / {keySignature} major / {timeSignature}</p></div>
-          <button className="help" onClick={() => setHelp(!help)} aria-expanded={help}>?</button>
+          <button className="help" onClick={() => setHelp(true)} aria-haspopup="dialog" aria-expanded={help}>User guide</button>
         </div>
 
-          {help && <aside className="helpCard"><b>Shorthand guide</b><button onClick={() => setHelp(false)} aria-label="Close guide">X</button><p><code>F#4/8</code> is an eighth note. Use <code>r/8</code> for a rest, <code>C4/4.</code> for a dotted note, and <code>C4/4~ C4/4</code> for tied notes. Define <code>AM = [A3,E4,A4,C#5,E5]</code> in the chord library, then enter <code>AM/4</code> anywhere in your shorthand.</p></aside>}
+          {help && <div className="guideBackdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setHelp(false); }}>
+            <aside className="userGuide" role="dialog" aria-modal="true" aria-labelledby="user-guide-title">
+              <header><div><span>Notely help</span><h2 id="user-guide-title">User guide</h2><p>Compose with shorthand, confirm the engraving, and hear the result.</p></div><button onClick={() => setHelp(false)} aria-label="Close user guide">X</button></header>
+              <div className="guideGrid">
+                <section><h3>1. Write notes</h3><p>Enter a pitch, octave, slash, and duration. Separate events with spaces.</p><div className="guideExamples"><code>C4/4</code><span>quarter-note middle C</span><code>F#4/8</code><span>eighth-note F sharp</span><code>Bb3/2</code><span>half-note B flat</span></div></section>
+                <section><h3>2. Durations and bars</h3><p>Use <code>/1</code>, <code>/2</code>, <code>/4</code>, <code>/8</code>, <code>/16</code>, or <code>/32</code>. Type <code>|</code> between measures. Bar indicators report missing or extra beats.</p></section>
+                <section><h3>3. Rests, dots, and ties</h3><div className="guideExamples"><code>r/4</code><span>quarter rest</span><code>C4/4.</code><span>dotted quarter note</span><code>C4/4~ C4/4</code><span>tie matching pitches</span></div><p>The Dot last and Tie last buttons can append these marks for you.</p></section>
+                <section><h3>4. Chords</h3><p>Define a reusable chord on its own line, then reference its name in the score.</p><div className="guideExamples wide"><code>AM = [A3,E4,A4,C#5,E5]</code><span>definition</span><code>AM/4</code><span>quarter-note A major chord</span></div><p>You can also write a chord inline: <code>[C4,E4,G4]/2</code>.</p></section>
+                <section><h3>5. Score settings</h3><p>Choose a time signature and key signature above the score. Notely recalculates bar completeness and redraws accidentals automatically.</p></section>
+                <section><h3>6. Playback</h3><p>Set the tempo, choose Play from start, and optionally enable Loop. Tied notes sustain as one sound.</p></section>
+                <section><h3>7. Songs and files</h3><p>Use New song and the song tabs to work on several pieces. Save as downloads a named <code>.txt</code> shorthand file; Open .txt restores one. Work is also saved on this device.</p></section>
+                <section><h3>8. Print or PDF</h3><p>Choose Print / PDF to open the browser print dialog. Select a printer, or choose Save as PDF for a portable score.</p></section>
+              </div>
+              <footer><b>Quick example</b><code>E4/8 F#4/8 G4/4 B4/4 A4/4 | r/4 E4/4. G4/8 B4/4</code><button onClick={() => setHelp(false)}>Start composing</button></footer>
+            </aside>
+          </div>}
 
         <section className="scoreSettings" aria-label="Score settings">
           <label>Time signature<select value={timeSignature} onChange={event => { setSaved(false); setTimeSignature(event.target.value); }}>{timeSignatures.map(value => <option key={value}>{value}</option>)}</select></label>
