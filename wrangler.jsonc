@@ -1,3 +1,4 @@
+
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "notely",
@@ -7,11 +8,11 @@
   "no_bundle": true,
   "assets": {
     "directory": "./dist/client",
-    "binding": "ASSETS",
-    "run_worker_first": true
+    "binding": "ASSETS"
   },
   "rules": [
     { "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }
   ],
   "observability": { "enabled": true }
 }
+
