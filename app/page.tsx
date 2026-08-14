@@ -357,7 +357,7 @@ export default function Home() {
     if (importedLibrary.errors.length) { setFileMessage(`Could not open: ${importedLibrary.errors[0]}.`); return; }
     const imported = parseComposition(shorthand, beatsPerBar(importedTime), importedLibrary.chords);
     const badTokens = imported.flatMap(measure => measure.invalid);
-    if (badTokens.length) { setFileMessage(`Could not open: unsupported token â€œ${badTokens[0]}â€.`); return; }
+    if (badTokens.length) { setFileMessage(`Could not open: unsupported token "${badTokens[0]}".`); return; }
     stop();
     setNotation(shorthand);
     setTitle(metadata.title || file.name.replace(/\.txt$/i, "") || "Imported composition");
@@ -372,12 +372,12 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brandmark">N</span><span>Notely</span></div>
-        <div className={`saved ${saved ? "" : "saving"}`}><span /> {saved ? "Saved on this device" : "Savingâ€¦"}</div>
+      <div className={`saved ${saved ? "" : "saving"}`}><span /> {saved ? "Saved on this device" : "Saving..."}</div>
         <div className="fileActions">
-          <button onClick={printComposition} aria-label="Print sheet music or save it as a PDF"><span>â–¤</span><b>Print / PDF</b></button>
-          <button onClick={() => { setSaveAsName(title); setSaveAsOpen(true); }} aria-label="Save composition as a text file"><span>â†“</span><b>Save as</b></button>
-          <button onClick={() => fileInput.current?.click()} aria-label="Open a shorthand text file"><span>â†‘</span><b>Open .txt</b></button>
-          <button className="clearAction" onClick={() => setClearOpen(true)} aria-label="Clear the active song"><span>Ã—</span><b>Clear</b></button>
+          <button onClick={printComposition} aria-label="Print sheet music or save it as a PDF"><span>[P]</span><b>Print / PDF</b></button>
+          <button onClick={() => { setSaveAsName(title); setSaveAsOpen(true); }} aria-label="Save composition as a text file"><span>[S]</span><b>Save as</b></button>
+          <button onClick={() => fileInput.current?.click()} aria-label="Open a shorthand text file"><span>[O]</span><b>Open .txt</b></button>
+          <button className="clearAction" onClick={() => setClearOpen(true)} aria-label="Clear the active song"><span>X</span><b>Clear</b></button>
           <input ref={fileInput} type="file" accept=".txt,text/plain" onChange={openTextFile} />
         </div>
       </header>
@@ -389,11 +389,11 @@ export default function Home() {
 
       <section className="workspace">
         <div className="titleRow">
-          <div className="titleBlock"><label htmlFor="song-title">Composition name</label><input id="song-title" className="songTitle" value={title} onChange={event => { setSaved(false); setTitle(event.target.value); }} aria-label="Composition title" /><p>Standard tuning Â· Guitar Â· {keySignature} major Â· {timeSignature}</p></div>
+            <div className="titleBlock"><label htmlFor="song-title">Composition name</label><input id="song-title" className="songTitle" value={title} onChange={event => { setSaved(false); setTitle(event.target.value); }} aria-label="Composition title" /><p>Standard tuning / Guitar / {keySignature} major / {timeSignature}</p></div>
           <button className="help" onClick={() => setHelp(!help)} aria-expanded={help}>?</button>
         </div>
 
-        {help && <aside className="helpCard"><b>Shorthand guide</b><button onClick={() => setHelp(false)} aria-label="Close guide">Ã—</button><p><code>F#4/8</code> is an eighth note. Use <code>r/8</code> for a rest, <code>C4/4.</code> for a dotted note, and <code>C4/4~ C4/4</code> for tied notes. Define <code>AM = [A3,E4,A4,C#5,E5]</code> in the chord library, then enter <code>AM/4</code> anywhere in your shorthand.</p></aside>}
+          {help && <aside className="helpCard"><b>Shorthand guide</b><button onClick={() => setHelp(false)} aria-label="Close guide">X</button><p><code>F#4/8</code> is an eighth note. Use <code>r/8</code> for a rest, <code>C4/4.</code> for a dotted note, and <code>C4/4~ C4/4</code> for tied notes. Define <code>AM = [A3,E4,A4,C#5,E5]</code> in the chord library, then enter <code>AM/4</code> anywhere in your shorthand.</p></aside>}
 
         <section className="scoreSettings" aria-label="Score settings">
           <label>Time signature<select value={timeSignature} onChange={event => { setSaved(false); setTimeSignature(event.target.value); }}>{timeSignatures.map(value => <option key={value}>{value}</option>)}</select></label>
@@ -411,40 +411,40 @@ export default function Home() {
           <div className="scoreScroll">
             <EngravedScore measures={measures} active={active} bpm={bpm} timeSignature={timeSignature} keySignature={keySignature} />
           </div>
-          <div className="measureStatus"><span>{measures.length} {measures.length === 1 ? "measure" : "measures"}</span><span>{totalBeats} beats</span><span className={allComplete ? "valid" : "warning"}>{allComplete ? "âœ“ Every bar has 4 beats" : hasBlockingErrors ? "! Fix highlighted bars" : "â€¢ Complete the open bars"}</span></div>
+            <div className="measureStatus"><span>{measures.length} {measures.length === 1 ? "measure" : "measures"}</span><span>{totalBeats} beats</span><span className={allComplete ? "valid" : "warning"}>{allComplete ? "OK Every bar has 4 beats" : hasBlockingErrors ? "! Fix highlighted bars" : "- Complete the open bars"}</span></div>
         </section>
 
         <section className="editor">
           <label htmlFor="notation"><span>Your shorthand</span><span className="syntax">Pitch + octave / duration</span></label>
-          {fileMessage && <div className="fileMessage" role="status"><span>{fileMessage}</span><button onClick={() => setFileMessage("")} aria-label="Dismiss file message">Ã—</button></div>}
+            {fileMessage && <div className="fileMessage" role="status"><span>{fileMessage}</span><button onClick={() => setFileMessage("")} aria-label="Dismiss file message">X</button></div>}
           <textarea id="notation" value={notation} onChange={event => changeNotation(event.target.value)} spellCheck={false} aria-describedby="bar-feedback"/>
           <div className="quickKeys">
             {["C4/4","D4/4","E4/4","F4/4","G4/4","A4/4","B4/4","r/4","r/4."].map(value => <button onClick={() => insert(value)} key={value}>{value}</button>)}
-            <button className="dotLast" onClick={dotLast} disabled={!canDotLast}>Â· Dot last</button>
-            <button className="tieLast" onClick={tieLast} disabled={!canTieLast}>âŒ’ Tie last</button>
+              <button className="dotLast" onClick={dotLast} disabled={!canDotLast}>. Dot last</button>
+              <button className="tieLast" onClick={tieLast} disabled={!canTieLast}>~ Tie last</button>
             <button onClick={() => insert("[C4,E4,G4]/4")}>C chord</button>
             <button className="finishBar" onClick={completeBar} disabled={hasBlockingErrors || atBarBoundary}>Finish bar&nbsp; |</button>
           </div>
           <div className="barFeedback" id="bar-feedback" aria-live="polite">
-            <div className="barChips">{measures.map((measure, index) => <span key={index} className={measure.status}>{measure.status === "complete" ? "âœ“" : measure.status === "under" ? `${barCapacity - measure.beats} beat${barCapacity - measure.beats === 1 ? "" : "s"} missing` : measure.status === "over" ? `${measure.beats - barCapacity} beat${measure.beats - barCapacity === 1 ? "" : "s"} over` : `Invalid: ${measure.invalid.join(", ")}`}<small>Bar {index + 1}</small></span>)}</div>
+              <div className="barChips">{measures.map((measure, index) => <span key={index} className={measure.status}>{measure.status === "complete" ? "OK" : measure.status === "under" ? `${barCapacity - measure.beats} beat${barCapacity - measure.beats === 1 ? "" : "s"} missing` : measure.status === "over" ? `${measure.beats - barCapacity} beat${measure.beats - barCapacity === 1 ? "" : "s"} over` : `Invalid: ${measure.invalid.join(", ")}`}<small>Bar {index + 1}</small></span>)}</div>
             {!allComplete && !hasBlockingErrors && <button onClick={completeAllBars}>Fill missing beats with rests</button>}
           </div>
         </section>
       </section>
 
       <section className="printSheet" aria-hidden="true">
-        <header><div className="printBrand">Notely</div><h1>{title.trim() || "Untitled composition"}</h1><p>Guitar Â· Standard tuning Â· {keySignature} major Â· {timeSignature} Â· â™© = {bpm}</p></header>
+          <header><div className="printBrand">Notely</div><h1>{title.trim() || "Untitled composition"}</h1><p>Guitar / Standard tuning / {keySignature} major / {timeSignature} / quarter note = {bpm}</p></header>
         <div className="printSystems">{printSystems.map((system, index) => <div className="printSystem" key={index}><EngravedScore measures={system} active={-1} bpm={bpm} timeSignature={timeSignature} keySignature={keySignature} /></div>)}</div>
-        <footer>{title.trim() || "Untitled composition"} Â· Printed from Notely</footer>
+          <footer>{title.trim() || "Untitled composition"} / Printed from Notely</footer>
       </section>
 
       {saveAsOpen && <div className="modalBackdrop" role="presentation" onMouseDown={() => setSaveAsOpen(false)}><form className="saveDialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); saveTextFile(saveAsName); }}><h2>Save composition</h2><label htmlFor="save-name">File and composition name</label><input id="save-name" value={saveAsName} onChange={event => setSaveAsName(event.target.value)} autoFocus /><p>Your shorthand, chord definitions, tempo, time signature, and key signature will be included.</p><div><button type="button" onClick={() => setSaveAsOpen(false)}>Cancel</button><button className="primary" type="submit">Save .txt</button></div></form></div>}
       {clearOpen && <div className="modalBackdrop" role="presentation" onMouseDown={() => setClearOpen(false)}><section className="saveDialog confirmDialog" role="alertdialog" aria-modal="true" aria-labelledby="clear-title" onMouseDown={event => event.stopPropagation()}><h2 id="clear-title">Clear this song?</h2><p>This will erase the notation and chord definitions in <b>{title.trim() || "this song"}</b> and reset its settings. Your other song tabs will not be changed.</p><div><button type="button" onClick={() => setClearOpen(false)}>Cancel</button><button className="danger" type="button" onClick={clearSong}>Clear song</button></div></section></div>}
 
       <footer className="transport">
-        <div className="tempo"><label htmlFor="tempo">Tempo</label><button onClick={() => { setSaved(false); setBpm(Math.max(40,bpm-1)); }} aria-label="Decrease tempo">âˆ’</button><input id="tempo" type="number" min="40" max="220" value={bpm} onChange={event => { setSaved(false); setBpm(Math.min(220, Math.max(40, Number(event.target.value)))); }}/><button onClick={() => { setSaved(false); setBpm(Math.min(220,bpm+1)); }} aria-label="Increase tempo">+</button><span>BPM</span></div>
-        <button className="play" onClick={play} disabled={!notes.length}><span>{playing ? "â– " : "â–¶"}</span>{playing ? "Stop" : "Play from start"}</button>
-        <button className={`loop ${loop ? "selected" : ""}`} onClick={() => setLoop(value => !value)} aria-label={`${loop ? "Disable" : "Enable"} loop playback`} aria-pressed={loop}>â†»</button>
+          <div className="tempo"><label htmlFor="tempo">Tempo</label><button onClick={() => { setSaved(false); setBpm(Math.max(40,bpm-1)); }} aria-label="Decrease tempo">-</button><input id="tempo" type="number" min="40" max="220" value={bpm} onChange={event => { setSaved(false); setBpm(Math.min(220, Math.max(40, Number(event.target.value)))); }}/><button onClick={() => { setSaved(false); setBpm(Math.min(220,bpm+1)); }} aria-label="Increase tempo">+</button><span>BPM</span></div>
+          <button className="play" onClick={play} disabled={!notes.length}><span>{playing ? "STOP" : "PLAY"}</span>{playing ? "Stop" : "Play from start"}</button>
+          <button className={`loop ${loop ? "selected" : ""}`} onClick={() => setLoop(value => !value)} aria-label={`${loop ? "Disable" : "Enable"} loop playback`} aria-pressed={loop}>Loop</button>
       </footer>
     </main>
   );
