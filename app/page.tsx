@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -261,213 +262,191 @@ export default function Home() {
       if (!continuesTie) {
         let tiedLength = length;
         let chain = index;
-        while (notes[chain]?.tied && notes[chain + 1]?.midis.join(",") === note.midis.join("çkh‘éì¶»§q«^w˜İ\œ™[[YH
-Èİ\œÛÜˆ
-ÈŒYY[™İ
-ˆMŠJNÂˆBˆ[Y\œË˜İ\œ™[œ\Ú
-Ú[™İËœÙ][Y[İ]
+        while (notes[chain]?.tied && notes[chain + 1]?.midis.join(",") === note.midis.join(",")) {
+          tiedLength += notes[chain + 1].beats * secondPerBeat;
+          chain++;
+        }
+        note.midis.forEach(midi => tone(ctx, midi, ctx.currentTime + cursor + .04, tiedLength * .96));
+      }
+      timers.current.push(window.setTimeout(() => setActive(index), cursor * 1000));
+      cursor += length;
+    });
+    timers.current.push(window.setTimeout(() => {
+      timers.current = [];
+      void ctx.close();
+      if (loopRef.current) schedulePlayback(); else { audio.current = null; setPlaying(false); setActive(-1); }
+    }, cursor * 1000 + 100));
+  };
 
+  const play = () => { if (playing) stop(); else schedulePlayback(); };
+  const currentSong = (): Song => ({ id: activeSongId, notation, title, bpm, timeSignature, keySignature, chordDefinitions });
+  const loadSong = (song: Song) => {
+    stop(); setActiveSongId(song.id); setNotation(song.notation); setTitle(song.title); setBpm(song.bpm); setTimeSignature(song.timeSignature); setKeySignature(song.keySignature); setChordDefinitions(song.chordDefinitions); setFileMessage(""); setSaved(true);
+  };
+  const switchSong = (id: string) => {
+    if (id === activeSongId) return;
+    const target = songs.find(song => song.id === id);
+    if (!target) return;
+    setSongs(current => current.map(song => song.id === activeSongId ? currentSong() : song));
+    loadSong(target);
+  };
+  const addSong = () => {
+    const song = newSong();
+    setSongs(current => [...current.map(item => item.id === activeSongId ? currentSong() : item), song]);
+    loadSong(song);
+  };
+  const clearSong = () => {
+    stop(); setNotation(""); setTitle("Untitled composition"); setBpm(92); setTimeSignature("4/4"); setKeySignature("C"); setChordDefinitions(""); setFileMessage(""); setClearOpen(false); setSaved(false);
+  };
+  const printComposition = () => {
+    stop();
+    window.print();
+  };
+  const changeNotation = (value: string) => { setSaved(false); setNotation(value); };
+  const insert = (value: string) => { setSaved(false); setNotation(current => `${current.trim()} ${value}`.trim()); };
+  const dotLast = () => {
+    if (!canDotLast) return;
+    setSaved(false);
+    setNotation(current => current.replace(/(\/(?:1|2|4|8|16))(?=\s*$)/, "$1."));
+  };
+  const tieLast = () => {
+    if (!canTieLast) return;
+    setSaved(false);
+    setNotation(current => `${current.trim()}~`);
+  };
+  const completeBar = () => {
+    if (atBarBoundary) return;
+    const current = measures.at(-1)!;
+    if (current.status === "over" || current.status === "invalid") return;
+    const rests = restsFor(barCapacity - current.beats);
+    setSaved(false);
+    setNotation(value => `${value.trim()}${rests.length ? ` ${rests.join(" ")}` : ""} | `);
+  };
+  const completeAllBars = () => {
+    if (hasBlockingErrors) return;
+    setSaved(false);
+    setNotation(measures.map(measure => `${measure.notes.map(n => n.raw).join(" ")}${measure.beats < barCapacity ? ` ${restsFor(barCapacity - measure.beats).join(" ")}` : ""}`.trim()).join(" | "));
+  };
+  const saveTextFile = (requestedName = title) => {
+    const safeTitle = requestedName.trim().replace(/[<>:"/\\|?*]+/g, "-").replace(/\s+/g, " ") || "notely-composition";
+    const chordLines = chordLibrary.definitions.map(definition => `# chord: ${definition.name} = [${definition.pitches.join(",")}]`).join("\n");
+    const contents = `# Notely\n# title: ${requestedName.trim() || "Untitled composition"}\n# time: ${timeSignature}\n# key: ${keySignature}\n# tempo: ${bpm}${chordLines ? `\n${chordLines}` : ""}\n\n${notation.trim()}\n`;
+    const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeTitle}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setTitle(requestedName.trim() || "Untitled composition");
+    setSaveAsOpen(false);
+    setFileMessage(`Saved ${safeTitle}.txt`);
+  };
+  const openTextFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 256_000) { setFileMessage("That file is too large. Choose a shorthand file under 256 KB."); return; }
+    const text = (await file.text()).trim();
+    if (!text) { setFileMessage("That file is empty."); return; }
+    const metadata = Object.fromEntries([...text.matchAll(/^#\s*(title|time|key|tempo):\s*(.+)$/gim)].map(match => [match[1].toLowerCase(), match[2].trim()]));
+    const importedChords = [...text.matchAll(/^#\s*chord:\s*(.+)$/gim)].map(match => match[1].trim()).join("\n");
+    const shorthand = text.split(/\r?\n/).filter(line => !line.trim().startsWith("#")).join(" ").trim();
+    const importedTime = timeSignatures.includes(metadata.time) ? metadata.time : timeSignature;
+    const importedLibrary = parseChordDefinitions(importedChords);
+    if (importedLibrary.errors.length) { setFileMessage(`Could not open: ${importedLibrary.errors[0]}.`); return; }
+    const imported = parseComposition(shorthand, beatsPerBar(importedTime), importedLibrary.chords);
+    const badTokens = imported.flatMap(measure => measure.invalid);
+    if (badTokens.length) { setFileMessage(`Could not open: unsupported token Ã¢â‚¬Å“${badTokens[0]}Ã¢â‚¬Â.`); return; }
+    stop();
+    setNotation(shorthand);
+    setTitle(metadata.title || file.name.replace(/\.txt$/i, "") || "Imported composition");
+    setTimeSignature(importedTime);
+    setChordDefinitions(importedChords);
+    if (keySignatures.includes(metadata.key)) setKeySignature(metadata.key);
+    if (metadata.tempo && Number(metadata.tempo) >= 40 && Number(metadata.tempo) <= 220) setBpm(Number(metadata.tempo));
+    setSaved(false);
+    setFileMessage(`Opened ${file.name}`);
+  };
+  return (
+    <main>
+      <header className="topbar">
+        <div className="brand"><span className="brandmark">N</span><span>Notely</span></div>
+        <div className={`saved ${saved ? "" : "saving"}`}><span /> {saved ? "Saved on this device" : "SavingÃ¢â‚¬Â¦"}</div>
+        <div className="fileActions">
+          <button onClick={printComposition} aria-label="Print sheet music or save it as a PDF"><span>Ã¢â€“Â¤</span><b>Print / PDF</b></button>
+          <button onClick={() => { setSaveAsName(title); setSaveAsOpen(true); }} aria-label="Save composition as a text file"><span>Ã¢â€ â€œ</span><b>Save as</b></button>
+          <button onClick={() => fileInput.current?.click()} aria-label="Open a shorthand text file"><span>Ã¢â€ â€˜</span><b>Open .txt</b></button>
+          <button className="clearAction" onClick={() => setClearOpen(true)} aria-label="Clear the active song"><span>Ãƒâ€”</span><b>Clear</b></button>
+          <input ref={fileInput} type="file" accept=".txt,text/plain" onChange={openTextFile} />
+        </div>
+      </header>
 
-HOˆÙ]Xİ]™J[™^
-Kİ\œÛÜˆ
-ˆL
-JNÂˆİ\œÛÜˆ
-ÏH[™İÂˆJNÂˆ[Y\œË˜İ\œ™[œ\Ú
-Ú[™İËœÙ][Y[İ]
+      <nav className="songTabs" aria-label="Open songs">
+        <div>{songs.map(song => <button key={song.id} className={song.id === activeSongId ? "active" : ""} onClick={() => switchSong(song.id)} aria-current={song.id === activeSongId ? "page" : undefined}>{song.id === activeSongId ? (title.trim() || "Untitled composition") : (song.title.trim() || "Untitled composition")}</button>)}</div>
+        <button className="newSong" onClick={addSong} aria-label="Create a new song">+ New song</button>
+      </nav>
 
+      <section className="workspace">
+        <div className="titleRow">
+          <div className="titleBlock"><label htmlFor="song-title">Composition name</label><input id="song-title" className="songTitle" value={title} onChange={event => { setSaved(false); setTitle(event.target.value); }} aria-label="Composition title" /><p>Standard tuning Ã‚Â· Guitar Ã‚Â· {keySignature} major Ã‚Â· {timeSignature}</p></div>
+          <button className="help" onClick={() => setHelp(!help)} aria-expanded={help}>?</button>
+        </div>
 
-HOˆÂˆ[Y\œË˜İ\œ™[H×NÂˆ›ÚYİ˜ÛÜÙJ
-NÂˆYˆ
-ÛÜ™Y‹˜İ\œ™[
-HØÚY[T^X˜XÚÊ
-NÈ[ÙHÈ]Y[Ë˜İ\œ™[H[ÈÙ]^Z[™Ê˜[ÙJNÈÙ]Xİ]™JLJNÈBˆKİ\œÛÜˆ
-ˆL
-ÈL
-JNÂˆNÂ‚ˆÛÛœİ^HH
+        {help && <aside className="helpCard"><b>Shorthand guide</b><button onClick={() => setHelp(false)} aria-label="Close guide">Ãƒâ€”</button><p><code>F#4/8</code> is an eighth note. Use <code>r/8</code> for a rest, <code>C4/4.</code> for a dotted note, and <code>C4/4~ C4/4</code> for tied notes. Define <code>AM = [A3,E4,A4,C#5,E5]</code> in the chord library, then enter <code>AM/4</code> anywhere in your shorthand.</p></aside>}
 
-HOˆÈYˆ
-^Z[™ÊHİÜ
+        <section className="scoreSettings" aria-label="Score settings">
+          <label>Time signature<select value={timeSignature} onChange={event => { setSaved(false); setTimeSignature(event.target.value); }}>{timeSignatures.map(value => <option key={value}>{value}</option>)}</select></label>
+          <label>Key signature<select value={keySignature} onChange={event => { setSaved(false); setKeySignature(event.target.value); }}>{keySignatures.map(value => <option key={value}>{value}</option>)}</select></label>
+        </section>
 
-NÈ[ÙHØÚY[T^X˜XÚÊ
-NÈNÂˆÛÛœİİ\œ™[ÛÛ™ÈH
+        <section className="chordLibrary" aria-labelledby="chord-library-title">
+          <div><label id="chord-library-title" htmlFor="chord-definitions">Chord definitions</label><span>One per line</span></div>
+          <textarea id="chord-definitions" className="chordDefinitions" value={chordDefinitions} onChange={event => { setSaved(false); setChordDefinitions(event.target.value); }} spellCheck={false} placeholder="AM = [A3,E4,A4,C#5,E5]" />
+          {chordLibrary.errors.length > 0 && <p className="chordError" role="alert">{chordLibrary.errors[0]}</p>}
+          {chordLibrary.definitions.length > 0 && <div className="chordShortcuts" aria-label="Defined chord shortcuts">{chordLibrary.definitions.map(definition => <button key={definition.name} onClick={() => insert(`${definition.name}/4`)} title={`Insert ${definition.name} as a quarter-note chord`}>{definition.name}/4</button>)}</div>}
+        </section>
 
-NˆÛÛ™ÈOˆ
-ÈYˆXİ]™TÛÛ™ÒY›İ][Û‹]KœK[YTÚYÛ˜]\™KÙ^TÚYÛ˜]\™KÚÜ™Yš[š][ÛœÈJNÂˆÛÛœİØYÛÛ™ÈH
-ÛÛ™ÎˆÛÛ™ÊHOˆÂˆİÜ
+        <section className="scoreCard" aria-label="Rendered sheet music">
+          <div className="scoreScroll">
+            <EngravedScore measures={measures} active={active} bpm={bpm} timeSignature={timeSignature} keySignature={keySignature} />
+          </div>
+          <div className="measureStatus"><span>{measures.length} {measures.length === 1 ? "measure" : "measures"}</span><span>{totalBeats} beats</span><span className={allComplete ? "valid" : "warning"}>{allComplete ? "Ã¢Å“â€œ Every bar has 4 beats" : hasBlockingErrors ? "! Fix highlighted bars" : "Ã¢â‚¬Â¢ Complete the open bars"}</span></div>
+        </section>
 
-NÈÙ]Xİ]™TÛÛ™ÒY
-ÛÛ™ËšY
-NÈÙ]›İ][ÛŠÛÛ™Ë››İ][ÛŠNÈÙ]]JÛÛ™Ë]JNÈÙ]œJÛÛ™Ë˜œJNÈÙ][YTÚYÛ˜]\™JÛÛ™Ë[YTÚYÛ˜]\™JNÈÙ]Ù^TÚYÛ˜]\™JÛÛ™ËšÙ^TÚYÛ˜]\™JNÈÙ]ÚÜ™Yš[š][ÛœÊÛÛ™Ë˜ÚÜ™Yš[š][ÛœÊNÈÙ]š[SY\ÜØYÙJˆŠNÈÙ]Ø]™Y
-YJNÂˆNÂˆÛÛœİİÚ]ÚÛÛ™ÈH
-Yˆİš[™ÊHOˆÂˆYˆ
-YOOHXİ]™TÛÛ™ÒY
-H™]\›ÂˆÛÛœİ\™Ù]HÛÛ™ÜË™š[™
-ÛÛ™ÈOˆÛÛ™ËšYOOHY
-NÂˆYˆ
-]\™Ù]
-H™]\›ÂˆÙ]ÛÛ™ÜÊİ\œ™[Oˆİ\œ™[›X\
-ÛÛ™ÈOˆÛÛ™ËšYOOHXİ]™TÛÛ™ÒYÈİ\œ™[ÛÛ™Ê
-HˆÛÛ™ÊJNÂˆØYÛÛ™Ê\™Ù]
-NÂˆNÂˆÛÛœİYÛÛ™ÈH
+        <section className="editor">
+          <label htmlFor="notation"><span>Your shorthand</span><span className="syntax">Pitch + octave / duration</span></label>
+          {fileMessage && <div className="fileMessage" role="status"><span>{fileMessage}</span><button onClick={() => setFileMessage("")} aria-label="Dismiss file message">Ãƒâ€”</button></div>}
+          <textarea id="notation" value={notation} onChange={event => changeNotation(event.target.value)} spellCheck={false} aria-describedby="bar-feedback"/>
+          <div className="quickKeys">
+            {["C4/4","D4/4","E4/4","F4/4","G4/4","A4/4","B4/4","r/4","r/4."].map(value => <button onClick={() => insert(value)} key={value}>{value}</button>)}
+            <button className="dotLast" onClick={dotLast} disabled={!canDotLast}>Ã‚Â· Dot last</button>
+            <button className="tieLast" onClick={tieLast} disabled={!canTieLast}>Ã¢Å’â€™ Tie last</button>
+            <button onClick={() => insert("[C4,E4,G4]/4")}>C chord</button>
+            <button className="finishBar" onClick={completeBar} disabled={hasBlockingErrors || atBarBoundary}>Finish bar&nbsp; |</button>
+          </div>
+          <div className="barFeedback" id="bar-feedback" aria-live="polite">
+            <div className="barChips">{measures.map((measure, index) => <span key={index} className={measure.status}>{measure.status === "complete" ? "Ã¢Å“â€œ" : measure.status === "under" ? `${barCapacity - measure.beats} beat${barCapacity - measure.beats === 1 ? "" : "s"} missing` : measure.status === "over" ? `${measure.beats - barCapacity} beat${measure.beats - barCapacity === 1 ? "" : "s"} over` : `Invalid: ${measure.invalid.join(", ")}`}<small>Bar {index + 1}</small></span>)}</div>
+            {!allComplete && !hasBlockingErrors && <button onClick={completeAllBars}>Fill missing beats with rests</button>}
+          </div>
+        </section>
+      </section>
 
-HOˆÂˆÛÛœİÛÛ™ÈH™]ÔÛÛ™Ê
-NÂˆÙ]ÛÛ™ÜÊİ\œ™[OˆË‹‹˜İ\œ™[›X\
-][HOˆ][KšYOOHXİ]™TÛÛ™ÒYÈİ\œ™[ÛÛ™Ê
-Hˆ][JKÛÛ™×JNÂˆØYÛÛ™ÊÛÛ™ÊNÂˆNÂˆÛÛœİÛX\”ÛÛ™ÈH
+      <section className="printSheet" aria-hidden="true">
+        <header><div className="printBrand">Notely</div><h1>{title.trim() || "Untitled composition"}</h1><p>Guitar Ã‚Â· Standard tuning Ã‚Â· {keySignature} major Ã‚Â· {timeSignature} Ã‚Â· Ã¢â„¢Â© = {bpm}</p></header>
+        <div className="printSystems">{printSystems.map((system, index) => <div className="printSystem" key={index}><EngravedScore measures={system} active={-1} bpm={bpm} timeSignature={timeSignature} keySignature={keySignature} /></div>)}</div>
+        <footer>{title.trim() || "Untitled composition"} Ã‚Â· Printed from Notely</footer>
+      </section>
 
-HOˆÂˆİÜ
+      {saveAsOpen && <div className="modalBackdrop" role="presentation" onMouseDown={() => setSaveAsOpen(false)}><form className="saveDialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); saveTextFile(saveAsName); }}><h2>Save composition</h2><label htmlFor="save-name">File and composition name</label><input id="save-name" value={saveAsName} onChange={event => setSaveAsName(event.target.value)} autoFocus /><p>Your shorthand, chord definitions, tempo, time signature, and key signature will be included.</p><div><button type="button" onClick={() => setSaveAsOpen(false)}>Cancel</button><button className="primary" type="submit">Save .txt</button></div></form></div>}
+      {clearOpen && <div className="modalBackdrop" role="presentation" onMouseDown={() => setClearOpen(false)}><section className="saveDialog confirmDialog" role="alertdialog" aria-modal="true" aria-labelledby="clear-title" onMouseDown={event => event.stopPropagation()}><h2 id="clear-title">Clear this song?</h2><p>This will erase the notation and chord definitions in <b>{title.trim() || "this song"}</b> and reset its settings. Your other song tabs will not be changed.</p><div><button type="button" onClick={() => setClearOpen(false)}>Cancel</button><button className="danger" type="button" onClick={clearSong}>Clear song</button></div></section></div>}
 
-NÈÙ]›İ][ÛŠˆŠNÈÙ]]J•[]YÛÛ\ÜÚ][ÛˆŠNÈÙ]œJLŠNÈÙ][YTÚYÛ˜]\™JÍŠNÈÙ]Ù^TÚYÛ˜]\™JÈŠNÈÙ]ÚÜ™Yš[š][ÛœÊˆŠNÈÙ]š[SY\ÜØYÙJˆŠNÈÙ]ÛX\“Ü[Š˜[ÙJNÈÙ]Ø]™Y
-˜[ÙJNÂˆNÂˆÛÛœİš[ÛÛ\ÜÚ][ÛˆH
+      <footer className="transport">
+        <div className="tempo"><label htmlFor="tempo">Tempo</label><button onClick={() => { setSaved(false); setBpm(Math.max(40,bpm-1)); }} aria-label="Decrease tempo">Ã¢Ë†â€™</button><input id="tempo" type="number" min="40" max="220" value={bpm} onChange={event => { setSaved(false); setBpm(Math.min(220, Math.max(40, Number(event.target.value)))); }}/><button onClick={() => { setSaved(false); setBpm(Math.min(220,bpm+1)); }} aria-label="Increase tempo">+</button><span>BPM</span></div>
+        <button className="play" onClick={play} disabled={!notes.length}><span>{playing ? "Ã¢â€“Â " : "Ã¢â€“Â¶"}</span>{playing ? "Stop" : "Play from start"}</button>
+        <button className={`loop ${loop ? "selected" : ""}`} onClick={() => setLoop(value => !value)} aria-label={`${loop ? "Disable" : "Enable"} loop playback`} aria-pressed={loop}>Ã¢â€ Â»</button>
+      </footer>
+    </main>
+  );
+}
 
-HOˆÂˆİÜ
-
-NÂˆÚ[™İËœš[
-
-NÂˆNÂˆÛÛœİÚ[™ÙS›İ][ÛˆH
-˜[YNˆİš[™ÊHOˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]›İ][ÛŠ˜[YJNÈNÂˆÛÛœİ[œÙ\H
-˜[YNˆİš[™ÊHOˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]›İ][ÛŠİ\œ™[Oˆ	Øİ\œ™[š[J
-_H	İ˜[Y_Xš[J
-JNÈNÂˆÛÛœİİ\İH
-
-HOˆÂˆYˆ
-XØ[‘İ\İ
-H™]\›ÂˆÙ]Ø]™Y
-˜[ÙJNÂˆÙ]›İ][ÛŠİ\œ™[Oˆİ\œ™[œ™\XÙJÊÊÎŒ_ŸMŠJJÏWÊ‰
-KË‰KˆŠJNÂˆNÂˆÛÛœİYS\İH
-
-HOˆÂˆYˆ
-XØ[•YS\İ
-H™]\›ÂˆÙ]Ø]™Y
-˜[ÙJNÂˆÙ]›İ][ÛŠİ\œ™[Oˆ	Øİ\œ™[š[J
-__˜
-NÂˆNÂˆÛÛœİÛÛ\]P˜\ˆH
-
-HOˆÂˆYˆ
-]˜\›İ[™\JH™]\›ÂˆÛÛœİİ\œ™[HYX\İ\™\Ë˜]
-LJHNÂˆYˆ
-İ\œ™[œİ]\ÈOOH›İ™\ˆˆİ\œ™[œİ]\ÈOOHš[˜[YŠH™]\›ÂˆÛÛœİ™\İÈH™\İÑ›ÜŠ˜\Ø\XÚ]HHİ\œ™[˜™X]ÊNÂˆÙ]Ø]™Y
-˜[ÙJNÂˆÙ]›İ][ÛŠ˜[YHOˆ	İ˜[YKš[J
-_IÜ™\İË›[™İÈ	Ü™\İËš›Ú[ŠˆŠ_XˆˆŸH
-NÂˆNÂˆÛÛœİÛÛ\]P[˜\œÈH
-
-HOˆÂˆYˆ
-\Ğ›ØÚÚ[™Ñ\œ›ÜœÊH™]\›ÂˆÙ]Ø]™Y
-˜[ÙJNÂˆÙ]›İ][ÛŠYX\İ\™\Ë›X\
-YX\İ\™HOˆ	ÛYX\İ\™K››İ\Ë›X\
-ˆOˆ‹œ˜]ÊKš›Ú[ŠˆŠ_IÛYX\İ\™K˜™X]È˜\Ø\XÚ]HÈ	Ü™\İÑ›ÜŠ˜\Ø\XÚ]HHYX\İ\™K˜™X]ÊKš›Ú[ŠˆŠ_XˆˆŸXš[J
-JKš›Ú[ŠˆŠJNÂˆNÂˆÛÛœİØ]™U^š[HH
-™\]Y\İY˜[YHH]JHOˆÂˆÛÛœİØY™U]HH™\]Y\İY˜[YKš[J
-Kœ™\XÙJÖÏˆ‹×Ê—JËÙË‹HŠKœ™\XÙJ×ÊËÙËˆŠH››İ[KXÛÛ\ÜÚ][ÛˆÂˆÛÛœİÚÜ™[™\ÈHÚÜ™Xœ˜\K™Yš[š][ÛœË›X\
-Yš[š][ÛˆOˆÈÚÜ™ˆ	ÙYš[š][Û‹›˜[Y_HHÉÙYš[š][Û‹œ]Ú\Ëš›Ú[Š‹Š_WX
-Kš›Ú[Š—ˆŠNÂˆÛÛœİÛÛ[ÈHÈ›İ[WˆÈ]Nˆ	Ü™\]Y\İY˜[YKš[J
-H•[]YÛÛ\ÜÚ][ÛˆŸWˆÈ[YNˆ	İ[YTÚYÛ˜]\™_WˆÈÙ^Nˆ	ÚÙ^TÚYÛ˜]\™_WˆÈ[\Îˆ	Øœ_IØÚÜ™[™\ÈÈ‰ØÚÜ™[™\ßXˆˆŸW—‰Û›İ][Û‹š[J
-_W˜ÂˆÛÛœİ›ØˆH™]È›ØŠØÛÛ[×KÈ\Nˆ^ÜZ[ØÚ\œÙ]]]‹NˆJNÂˆÛÛœİ\›HT“˜Ü™X]SØš™XİT“
-›ØŠNÂˆÛÛœİ[šÈHØİ[Y[˜Ü™X]Q[[Y[
-˜HŠNÂˆ[šËš™YˆH\›Âˆ[šË™İÛ›ØYH	ÜØY™U]_KÂˆ[šË˜ÛXÚÊ
-NÂˆT“œ™]›ÚÙSØš™XİT“
-\›
-NÂˆÙ]]J™\]Y\İY˜[YKš[J
-H•[]YÛÛ\ÜÚ][ÛˆŠNÂˆÙ]Ø]™P\ÓÜ[Š˜[ÙJNÂˆÙ]š[SY\ÜØYÙJØ]™Y	ÜØY™U]_K
-NÂˆNÂˆÛÛœİÜ[•^š[HH\Ş[˜È
-]™[ˆ™XXİÚ[™ÙQ]™[S[œ][[Y[ŠHOˆÂˆÛÛœİš[HH]™[\™Ù]™š[\ÏË–ÌNÂˆ]™[\™Ù]˜[YHHˆÂˆYˆ
-Yš[JH™]\›ÂˆYˆ
-š[KœÚ^™HˆM—Ì
-HÈÙ]š[SY\ÜØYÙJ•]š[H\ÈÛÈ\™ÙKˆÚÛÜÙHHÚÜ[™š[H[™\ˆMˆĞ‹ˆŠNÈ™]\›ÈBˆÛÛœİ^H
-]ØZ]š[K^
-
-JKš[J
-NÂˆYˆ
-]^
-HÈÙ]š[SY\ÜØYÙJ•]š[H\È[\KˆŠNÈ™]\›ÈBˆÛÛœİY]Y]HHØš™Xİ™œ›ÛQ[šY\ÊË‹‹^›X]Ú[
-×ˆ×ÊŠ]_[Y_Ù^_[\ÊN—ÊŠŠÊIÙÚ[JWK›X\
-X]ÚOˆÛX]ÚÌWKÓİÙ\Ø\ÙJ
-KX]ÚÌ—Kš[J
-WJJNÂˆÛÛœİ[\ÜYÚÜ™ÈHË‹‹^›X]Ú[
-×ˆ×Ê˜ÚÜ™—ÊŠŠÊIÙÚ[JWK›X\
-X]ÚOˆX]ÚÌWKš[J
-JKš›Ú[Š—ˆŠNÂˆÛÛœİÚÜ[™H^œÜ]
-××‹ÊK™š[\Š[™HOˆ[[™Kš[J
-Kœİ\ÕÚ]
-ˆÈŠJKš›Ú[ŠˆŠKš[J
-NÂˆÛÛœİ[\ÜY[YHH[YTÚYÛ˜]\™\Ëš[˜ÛY\ÊY]Y]K[YJHÈY]Y]K[YHˆ[YTÚYÛ˜]\™NÂˆÛÛœİ[\ÜYXœ˜\HH\œÙPÚÜ™Yš[š][ÛœÊ[\ÜYÚÜ™ÊNÂˆYˆ
-[\ÜYXœ˜\K™\œ›ÜœË›[™İ
-HÈÙ]š[SY\ÜØYÙJÛİ[›İÜ[ˆ	Ú[\ÜYXœ˜\K™\œ›ÜœÖÌ_K˜
-NÈ™]\›ÈBˆÛÛœİ[\ÜYH\œÙPÛÛ\ÜÚ][ÛŠÚÜ[™™X]Ô\˜\Š[\ÜY[YJK[\ÜYXœ˜\K˜ÚÜ™ÊNÂˆÛÛœİ˜YÚÙ[œÈH[\ÜY™›]X\
-YX\İ\™HOˆYX\İ\™Kš[˜[Y
-NÂˆYˆ
-˜YÚÙ[œË›[™İ
-HÈÙ]š[SY\ÜØYÙJÛİ[›İÜ[ˆ[œİ\ÜYÚÙ[ˆ8 '	Ø˜YÚÙ[œÖÌ_x 'K˜
-NÈ™]\›ÈBˆİÜ
-
-NÂˆÙ]›İ][ÛŠÚÜ[™
-NÂˆÙ]]JY]Y]K]Hš[K›˜[YKœ™\XÙJ×	ÚKˆŠH’[\ÜYÛÛ\ÜÚ][ÛˆŠNÂˆÙ][YTÚYÛ˜]\™J[\ÜY[YJNÂˆÙ]ÚÜ™Yš[š][ÛœÊ[\ÜYÚÜ™ÊNÂˆYˆ
-Ù^TÚYÛ˜]\™\Ëš[˜ÛY\ÊY]Y]KšÙ^JJHÙ]Ù^TÚYÛ˜]\™JY]Y]KšÙ^JNÂˆYˆ
-Y]Y]K[\È	‰ˆ[X™\ŠY]Y]K[\ÊHH	‰ˆ[X™\ŠY]Y]K[\ÊHHŒŒ
-HÙ]œJ[X™\ŠY]Y]K[\ÊJNÂˆÙ]Ø]™Y
-˜[ÙJNÂˆÙ]š[SY\ÜØYÙJÜ[™Y	Ùš[K›˜[Y_X
-NÂˆNÂˆ™]\›ˆ
-ˆXZ[‚ˆXY\ˆÛ\ÜÓ˜[YOHÜ˜\ˆ‚ˆ]ˆÛ\ÜÓ˜[YOH˜œ˜[™Ü[ˆÛ\ÜÓ˜[YOH˜œ˜[™X\šÈ“ÜÜ[Ü[“›İ[OÜÜ[Ù]‚ˆ]ˆÛ\ÜÓ˜[YO^ØØ]™Y	ÜØ]™YÈˆˆˆœØ]š[™ÈŸXOÜ[ˆÏˆÜØ]™YÈ”Ø]™YÛˆ\È]šXÙHˆˆ”Ø]š[™ø )ˆŸOÙ]‚ˆ]ˆÛ\ÜÓ˜[YOH™š[PXİ[ÛœÈ‚ˆ]ÛˆÛÛXÚÏ^Üš[ÛÛ\ÜÚ][ÛŸH\šXK[X™[H”š[ÚY]]\ÚXÈÜˆØ]™H]\ÈHˆÜ[¸¥©ÜÜ[”š[ÈØØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ê
-HOˆÈÙ]Ø]™P\Ó˜[YJ]JNÈÙ]Ø]™P\ÓÜ[ŠYJNÈ_H\šXK[X™[H”Ø]™HÛÛ\ÜÚ][Ûˆ\ÈH^š[HÜ[¸¡¤ÏÜÜ[”Ø]™H\ÏØØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ê
-HOˆš[R[œ]˜İ\œ™[Ë˜ÛXÚÊ
-_H\šXK[X™[H“Ü[ˆHÚÜ[™^š[HÜ[¸¡¤OÜÜ[“Ü[ˆØØ]Û‚ˆ]ÛˆÛ\ÜÓ˜[YOH˜ÛX\Xİ[ÛˆˆÛÛXÚÏ^Ê
-HOˆÙ]ÛX\“Ü[ŠYJ_H\šXK[X™[HÛX\ˆHXİ]™HÛÛ™ÈÜ[°åÏÜÜ[ÛX\ØØ]Û‚ˆ[œ]™Y^Ùš[R[œ]H\OH™š[HˆXØÙ\H‹^ÜZ[ˆˆÛÚ[™ÙO^ÛÜ[•^š[_HÏ‚ˆÙ]‚ˆÚXY\‚‚ˆ˜]ˆÛ\ÜÓ˜[YOHœÛÛ™ÕXœÈˆ\šXK[X™[H“Ü[ˆÛÛ™ÜÈ‚ˆ]ÜÛÛ™ÜË›X\
-ÛÛ™ÈOˆ]ÛˆÙ^O^ÜÛÛ™ËšYHÛ\ÜÓ˜[YO^ÜÛÛ™ËšYOOHXİ]™TÛÛ™ÒYÈ˜Xİ]™HˆˆˆŸHÛÛXÚÏ^Ê
-HOˆİÚ]ÚÛÛ™ÊÛÛ™ËšY
-_H\šXKXİ\œ™[^ÜÛÛ™ËšYOOHXİ]™TÛÛ™ÒYÈœYÙHˆˆ[™Yš[™YOÜÛÛ™ËšYOOHXİ]™TÛÛ™ÒYÈ
-]Kš[J
-H•[]YÛÛ\ÜÚ][ÛˆŠHˆ
-ÛÛ™Ë]Kš[J
-H•[]YÛÛ\ÜÚ][ÛˆŠ_OØ]ÛŠ_OÙ]‚ˆ]ÛˆÛ\ÜÓ˜[YOH›™]ÔÛÛ™ÈˆÛÛXÚÏ^ØYÛÛ™ßH\šXK[X™[HÜ™X]HH™]ÈÛÛ™ÈŠÈ™]ÈÛÛ™ÏØ]Û‚ˆÛ˜]‚‚ˆÙXİ[ÛˆÛ\ÜÓ˜[YOHÛÜšÜÜXÙH‚ˆ]ˆÛ\ÜÓ˜[YOH]T›İÈ‚ˆ]ˆÛ\ÜÓ˜[YOH]P›ØÚÈX™[[›ÜHœÛÛ™Ë]]HÛÛ\ÜÚ][Ûˆ˜[YOÛX™[[œ]YHœÛÛ™Ë]]HˆÛ\ÜÓ˜[YOHœÛÛ™Õ]Hˆ˜[YO^İ]_HÛÚ[™ÙO^Ù]™[OˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]]J]™[\™Ù]˜[YJNÈ_H\šXK[X™[HÛÛ\ÜÚ][Ûˆ]HˆÏ”İ[™\™[š[™È0­ÈİZ]\ˆ0­ÈÚÙ^TÚYÛ˜]\™_HXZ›Üˆ0­Èİ[YTÚYÛ˜]\™_OÜÙ]‚ˆ]ÛˆÛ\ÜÓ˜[YOHš[ˆÛÛXÚÏ^Ê
-HOˆÙ][
-Z[
-_H\šXKY^[™Y^Ú[OÏØ]Û‚ˆÙ]‚‚ˆÚ[	‰ˆ\ÚYHÛ\ÜÓ˜[YOHš[Ø\™”ÚÜ[™İZYOØ]ÛˆÛÛXÚÏ^Ê
-HOˆÙ][
-˜[ÙJ_H\šXK[X™[HÛÜÙHİZYH°åÏØ]ÛÛÙO‘ˆÍÎØÛÙOˆ\È[ˆZYÚ›İKˆ\ÙHÛÙOœ‹ÎØÛÙOˆ›ÜˆH™\İÛÙOÍÍØÛÙOˆ›ÜˆHİY›İK[™ÛÙOÍÍˆÍÍØÛÙOˆ›ÜˆYY›İ\ËˆYš[™HÛÙOSHHĞLËMMÈÍKMWOØÛÙOˆ[ˆHÚÜ™Xœ˜\K[ˆ[\ˆÛÙOSKÍØÛÙOˆ[]Ú\™H[ˆ[İ\ˆÚÜ[™ÜØ\ÚYOŸB‚ˆÙXİ[ÛˆÛ\ÜÓ˜[YOHœØÛÜ™TÙ][™ÜÈˆ\šXK[X™[H”ØÛÜ™HÙ][™ÜÈ‚ˆX™[•[YHÚYÛ˜]\™OÙ[Xİ˜[YO^İ[YTÚYÛ˜]\™_HÛÚ[™ÙO^Ù]™[OˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ][YTÚYÛ˜]\™J]™[\™Ù]˜[YJNÈ_Oİ[YTÚYÛ˜]\™\Ë›X\
-˜[YHOˆÜ[ÛˆÙ^O^İ˜[Y_Oİ˜[Y_OÛÜ[ÛŠ_OÜÙ[XİÛX™[‚ˆX™[’Ù^HÚYÛ˜]\™OÙ[Xİ˜[YO^ÚÙ^TÚYÛ˜]\™_HÛÚ[™ÙO^Ù]™[OˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]Ù^TÚYÛ˜]\™J]™[\™Ù]˜[YJNÈ_OÚÙ^TÚYÛ˜]\™\Ë›X\
-˜[YHOˆÜ[ÛˆÙ^O^İ˜[Y_Oİ˜[Y_OÛÜ[ÛŠ_OÜÙ[XİÛX™[‚ˆÜÙXİ[Û‚‚ˆÙXİ[ÛˆÛ\ÜÓ˜[YOH˜ÚÜ™Xœ˜\Hˆ\šXK[X™[YOH˜ÚÜ™[Xœ˜\K]]H‚ˆ]X™[YH˜ÚÜ™[Xœ˜\K]]Hˆ[›ÜH˜ÚÜ™YYš[š][ÛœÈÚÜ™Yš[š][ÛœÏÛX™[Ü[“Û™H\ˆ[™OÜÜ[Ù]‚ˆ^\™XHYH˜ÚÜ™YYš[š][ÛœÈˆÛ\ÜÓ˜[YOH˜ÚÜ™Yš[š][ÛœÈˆ˜[YO^ØÚÜ™Yš[š][ÛœßHÛÚ[™ÙO^Ù]™[OˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]ÚÜ™Yš[š][ÛœÊ]™[\™Ù]˜[YJNÈ_HÜ[ÚXÚÏ^Ù˜[Ù_HXÙZÛ\HSHHĞLËMMÈÍKMWHˆÏ‚ˆØÚÜ™Xœ˜\K™\œ›ÜœË›[™İˆ	‰ˆÛ\ÜÓ˜[YOH˜ÚÜ™\œ›Üˆˆ›ÛOH˜[\ØÚÜ™Xœ˜\K™\œ›ÜœÖÌ_OÜŸBˆØÚÜ™Xœ˜\K™Yš[š][ÛœË›[™İˆ	‰ˆ]ˆÛ\ÜÓ˜[YOH˜ÚÜ™ÚÜİ]Èˆ\šXK[X™[H‘Yš[™YÚÜ™ÚÜİ]ÈØÚÜ™Xœ˜\K™Yš[š][ÛœË›X\
-Yš[š][ÛˆOˆ]ÛˆÙ^O^ÙYš[š][Û‹›˜[Y_HÛÛXÚÏ^Ê
-HOˆ[œÙ\
-	ÙYš[š][Û‹›˜[Y_KÍ
-_H]O^Ø[œÙ\	ÙYš[š][Û‹›˜[Y_H\ÈH]X\\‹[›İHÚÜ™OÙYš[š][Û‹›˜[Y_KÍØ]ÛŠ_OÙ]ŸBˆÜÙXİ[Û‚‚ˆÙXİ[ÛˆÛ\ÜÓ˜[YOHœØÛÜ™PØ\™ˆ\šXK[X™[H”™[™\™YÚY]]\ÚXÈ‚ˆ]ˆÛ\ÜÓ˜[YOHœØÛÜ™TØÜ›Û‚ˆ[™Ü˜]™YØÛÜ™HYX\İ\™\Ï^ÛYX\İ\™\ßHXİ]™O^ØXİ]™_HœO^Øœ_H[YTÚYÛ˜]\™O^İ[YTÚYÛ˜]\™_HÙ^TÚYÛ˜]\™O^ÚÙ^TÚYÛ˜]\™_HÏ‚ˆÙ]‚ˆ]ˆÛ\ÜÓ˜[YOH›YX\İ\™Tİ]\ÈÜ[ÛYX\İ\™\Ë›[™İHÛYX\İ\™\Ë›[™İOOHHÈ›YX\İ\™Hˆˆ›YX\İ\™\ÈŸOÜÜ[Ü[İİ[™X]ßH™X]ÏÜÜ[Ü[ˆÛ\ÜÓ˜[YO^Ø[ÛÛ\]HÈ˜[YˆˆØ\›š[™ÈŸOØ[ÛÛ\]HÈ¸§$È]™\H˜\ˆ\È™X]Èˆˆ\Ğ›ØÚÚ[™Ñ\œ›ÜœÈÈˆHš^YÚYÚY˜\œÈˆˆ¸ (ˆÛÛ\]HHÜ[ˆ˜\œÈŸOÜÜ[Ù]‚ˆÜÙXİ[Û‚‚ˆÙXİ[ÛˆÛ\ÜÓ˜[YOH™Y]Üˆ‚ˆX™[[›ÜH››İ][ÛˆÜ[–[İ\ˆÚÜ[™ÜÜ[Ü[ˆÛ\ÜÓ˜[YOHœŞ[^”]Ú
-ÈØİ]™HÈ\˜][ÛÜÜ[ÛX™[‚ˆÙš[SY\ÜØYÙH	‰ˆ]ˆÛ\ÜÓ˜[YOH™š[SY\ÜØYÙHˆ›ÛOHœİ]\ÈÜ[Ùš[SY\ÜØYÙ_OÜÜ[]ÛˆÛÛXÚÏ^Ê
-HOˆÙ]š[SY\ÜØYÙJˆŠ_H\šXK[X™[H‘\ÛZ\ÜÈš[HY\ÜØYÙH°åÏØ]ÛÙ]ŸBˆ^\™XHYH››İ][Ûˆˆ˜[YO^Û›İ][ÛŸHÛÚ[™ÙO^Ù]™[OˆÚ[™ÙS›İ][ÛŠ]™[\™Ù]˜[YJ_HÜ[ÚXÚÏ^Ù˜[Ù_H\šXKY\ØÜšX™YOH˜˜\‹Y™YY˜XÚÈ‹Ï‚ˆ]ˆÛ\ÜÓ˜[YOHœ]ZXÚÒÙ^\È‚ˆÖÈÍÍ‹‘Í‹‘MÍ‹‘Í‹‘ÍÍ‹MÍ‹Í‹œ‹Í‹œ‹Íˆ—K›X\
-˜[YHOˆ]ÛˆÛÛXÚÏ^Ê
-HOˆ[œÙ\
-˜[YJ_HÙ^O^İ˜[Y_Oİ˜[Y_OØ]ÛŠ_Bˆ]ÛˆÛ\ÜÓ˜[YOH™İ\İˆÛÛXÚÏ^Ùİ\İH\ØX›Y^ÈXØ[‘İ\İO°­Èİ\İØ]Û‚ˆ]ÛˆÛ\ÜÓ˜[YOHYS\İˆÛÛXÚÏ^İYS\İH\ØX›Y^ÈXØ[•YS\İO¸£$ˆYH\İØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ê
-HOˆ[œÙ\
-–ĞÍMÍKÍŠ_OÈÚÜ™Ø]Û‚ˆ]ÛˆÛ\ÜÓ˜[YOH™š[š\Ú˜\ˆˆÛÛXÚÏ^ØÛÛ\]P˜\ŸH\ØX›Y^Ú\Ğ›ØÚÚ[™Ñ\œ›ÜœÈ]˜\›İ[™\_O‘š[š\Ú˜\‰›˜œÜÈØ]Û‚ˆÙ]‚ˆ]ˆÛ\ÜÓ˜[YOH˜˜\‘™YY˜XÚÈˆYH˜˜\‹Y™YY˜XÚÈˆ\šXK[]™OHœÛ]H‚ˆ]ˆÛ\ÜÓ˜[YOH˜˜\Ú\ÈÛYX\İ\™\Ë›X\
-
-YX\İ\™K[™^
-HOˆÜ[ˆÙ^O^Ú[™^HÛ\ÜÓ˜[YO^ÛYX\İ\™Kœİ]\ßOÛYX\İ\™Kœİ]\ÈOOH˜ÛÛ\]HˆÈ¸§$ÈˆˆYX\İ\™Kœİ]\ÈOOH[™\ˆˆÈ	Ø˜\Ø\XÚ]HHYX\İ\™K˜™X]ßH™X]	Ø˜\Ø\XÚ]HHYX\İ\™K˜™X]ÈOOHHÈˆˆˆœÈŸHZ\ÜÚ[™ØˆYX\İ\™Kœİ]\ÈOOH›İ™\ˆˆÈ	ÛYX\İ\™K˜™X]ÈH˜\Ø\XÚ]_H™X]	ÛYX\İ\™K˜™X]ÈH˜\Ø\XÚ]HOOHHÈˆˆˆœÈŸHİ™\˜ˆ[˜[Yˆ	ÛYX\İ\™Kš[˜[Yš›Ú[Š‹Š_XOÛX[˜\ˆÚ[™^
-È_OÜÛX[ÜÜ[Š_OÙ]‚ˆÈX[ÛÛ\]H	‰ˆZ\Ğ›ØÚÚ[™Ñ\œ›ÜœÈ	‰ˆ]ÛˆÛÛXÚÏ^ØÛÛ\]P[˜\œßO‘š[Z\ÜÚ[™È™X]ÈÚ]™\İÏØ]ÛŸBˆÙ]‚ˆÜÙXİ[Û‚ˆÜÙXİ[Û‚‚ˆÙXİ[ÛˆÛ\ÜÓ˜[YOHœš[ÚY]ˆ\šXKZY[HYH‚ˆXY\]ˆÛ\ÜÓ˜[YOHœš[œ˜[™“›İ[OÙ]Oİ]Kš[J
-H•[]YÛÛ\ÜÚ][ÛˆŸOÚO‘İZ]\ˆ0­Èİ[™\™[š[™È0­ÈÚÙ^TÚYÛ˜]\™_HXZ›Üˆ0­Èİ[YTÚYÛ˜]\™_H0­È8¦jHHØœ_OÜÚXY\‚ˆ]ˆÛ\ÜÓ˜[YOHœš[Ş\İ[\ÈÜš[Ş\İ[\Ë›X\
-
-Ş\İ[K[™^
-HOˆ]ˆÛ\ÜÓ˜[YOHœš[Ş\İ[HˆÙ^O^Ú[™^O[™Ü˜]™YØÛÜ™HYX\İ\™\Ï^ÜŞ\İ[_HXİ]™O^ËL_HœO^Øœ_H[YTÚYÛ˜]\™O^İ[YTÚYÛ˜]\™_HÙ^TÚYÛ˜]\™O^ÚÙ^TÚYÛ˜]\™_HÏÙ]Š_OÙ]‚ˆ›Ûİ\İ]Kš[J
-H•[]YÛÛ\ÜÚ][ÛˆŸH0­Èš[Yœ›ÛH›İ[OÙ›Ûİ\‚ˆÜÙXİ[Û‚‚ˆÜØ]™P\ÓÜ[ˆ	‰ˆ]ˆÛ\ÜÓ˜[YOH›[Ù[˜XÚÙ›Üˆ›ÛOHœ™\Ù[][ÛˆˆÛ“[İ\ÙQİÛ^Ê
-HOˆÙ]Ø]™P\ÓÜ[Š˜[ÙJ_O›Ü›HÛ\ÜÓ˜[YOHœØ]™QX[ÙÈˆÛ“[İ\ÙQİÛ^Ù]™[Oˆ]™[œİÜ›ÜYØ][ÛŠ
-_HÛ”İX›Z]^Ù]™[OˆÈ]™[œ™]™[Y˜][
-
-NÈØ]™U^š[JØ]™P\Ó˜[YJNÈ_O”Ø]™HÛÛ\ÜÚ][ÛÚX™[[›ÜHœØ]™K[˜[YH‘š[H[™ÛÛ\ÜÚ][Ûˆ˜[YOÛX™[[œ]YHœØ]™K[˜[YHˆ˜[YO^ÜØ]™P\Ó˜[Y_HÛÚ[™ÙO^Ù]™[OˆÙ]Ø]™P\Ó˜[YJ]™[\™Ù]˜[YJ_H]]Ñ›Øİ\ÈÏ–[İ\ˆÚÜ[™ÚÜ™Yš[š][ÛœË[\Ë[YHÚYÛ˜]\™K[™Ù^HÚYÛ˜]\™HÚ[™H[˜ÛYYÜ]]Ûˆ\OH˜]ÛˆˆÛÛXÚÏ^Ê
-HOˆÙ]Ø]™P\ÓÜ[Š˜[ÙJ_OØ[˜Ù[Ø]Û]ÛˆÛ\ÜÓ˜[YOHœš[X\Hˆ\OHœİX›Z]”Ø]™HØ]ÛÙ]Ù›Ü›OÙ]ŸBˆØÛX\“Ü[ˆ	‰ˆ]ˆÛ\ÜÓ˜[YOH›[Ù[˜XÚÙ›Üˆ›ÛOHœ™\Ù[][ÛˆˆÛ“[İ\ÙQİÛ^Ê
-HOˆÙ]ÛX\“Ü[Š˜[ÙJ_OÙXİ[ÛˆÛ\ÜÓ˜[YOHœØ]™QX[ÙÈÛÛ™š\›QX[ÙÈˆ›ÛOH˜[\X[ÙÈˆ\šXK[[Ù[HYHˆ\šXK[X™[YOH˜ÛX\‹]]HˆÛ“[İ\ÙQİÛ^Ù]™[Oˆ]™[œİÜ›ÜYØ][ÛŠ
-_OˆYH˜ÛX\‹]]HÛX\ˆ\ÈÛÛ™ÏÏÚ•\ÈÚ[\˜\ÙHH›İ][Ûˆ[™ÚÜ™Yš[š][ÛœÈ[ˆİ]Kš[J
-H\ÈÛÛ™ÈŸOØˆ[™™\Ù]]ÈÙ][™ÜËˆ[İ\ˆİ\ˆÛÛ™ÈXœÈÚ[›İ™HÚ[™ÙYÜ]]Ûˆ\OH˜]ÛˆˆÛÛXÚÏ^Ê
-HOˆÙ]ÛX\“Ü[Š˜[ÙJ_OØ[˜Ù[Ø]Û]ÛˆÛ\ÜÓ˜[YOH™[™Ù\ˆˆ\OH˜]ÛˆˆÛÛXÚÏ^ØÛX\”ÛÛ™ßOÛX\ˆÛÛ™ÏØ]ÛÙ]ÜÙXİ[ÛÙ]ŸB‚ˆ›Ûİ\ˆÛ\ÜÓ˜[YOH˜[œÜÜ‚ˆ]ˆÛ\ÜÓ˜[YOH[\ÈX™[[›ÜH[\È•[\ÏÛX™[]ÛˆÛÛXÚÏ^Ê
-HOˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]œJX]›X^
-œKLJJNÈ_H\šXK[X™[H‘XÜ™X\ÙH[\È¸¢$Ø]Û[œ]YH[\Èˆ\OH›[X™\ˆˆZ[HˆX^HŒŒŒˆ˜[YO^Øœ_HÛÚ[™ÙO^Ù]™[OˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]œJX]›Z[ŠŒŒX]›X^
-[X™\Š]™[\™Ù]˜[YJJJJNÈ_KÏ]ÛˆÛÛXÚÏ^Ê
-HOˆÈÙ]Ø]™Y
-˜[ÙJNÈÙ]œJX]›Z[ŠŒŒœJÌJJNÈ_H\šXK[X™[H’[˜Ü™X\ÙH[\ÈŠÏØ]ÛÜ[”OÜÜ[Ù]‚ˆ]ÛˆÛ\ÜÓ˜[YOHœ^HˆÛÛXÚÏ^Ü^_H\ØX›Y^È[›İ\Ë›[™İOÜ[Ü^Z[™ÈÈ¸¥¨ˆˆ¸¥­ˆŸOÜÜ[Ü^Z[™ÈÈ”İÜˆˆ”^Hœ›ÛHİ\ŸOØ]Û‚ˆ]ÛˆÛ\ÜÓ˜[YO^ØÛÜ	ÛÛÜÈœÙ[XİYˆˆˆŸXHÛÛXÚÏ^Ê
-HOˆÙ]ÛÜ
-˜[YHOˆ]˜[YJ_H\šXK[X™[^Ø	ÛÛÜÈ‘\ØX›Hˆˆ‘[˜X›HŸHÛÜ^X˜XÚØH\šXK\™\ÜÙY^ÛÛÜO¸¡®ÏØ]Û‚ˆÙ›Ûİ\‚ˆÛXZ[‚ˆ
-NÂŸB
