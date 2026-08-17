@@ -4,7 +4,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Note = { raw: string; pitches: string[]; duration: number; dotted: boolean; tied: boolean; beats: number; measure: number; midis: number[] };
-type Measure = { notes: Note[]; beats: number; invalid: string[]; status: "complete" | "under" | "over" | "invalid" };
+type MeasureStatus = "complete" | "pickup" | "outro" | "under" | "over" | "invalid";
+type Measure = { notes: Note[]; beats: number; invalid: string[]; status: MeasureStatus };
 type ChordDefinition = { name: string; pitches: string[] };
 type Song = { id: string; notation: string; title: string; bpm: number; timeSignature: string; keySignature: string; chordDefinitions: string };
 
@@ -44,7 +45,7 @@ function parseChordDefinitions(input: string) {
 function parseComposition(input: string, barCapacity: number, chords: Record<string, string[]> = {}): Measure[] {
   const barStrings = input.split("|");
   while (barStrings.length > 1 && !barStrings.at(-1)?.trim()) barStrings.pop();
-  return barStrings.map((bar, measure) => {
+  const measures = barStrings.map((bar, measure): Measure => {
     const invalid: string[] = [];
     const notes = bar.trim().split(/\s+/).filter(Boolean).flatMap((raw): Note[] => {
       const match = raw.match(/^(.+)\/(1|2|4|8|16|32)(\.)?(~)?$/);
@@ -64,9 +65,17 @@ function parseComposition(input: string, barCapacity: number, chords: Record<str
       return [{ raw, pitches, duration, dotted, tied, beats: (4 / duration) * (dotted ? 1.5 : 1), measure, midis }];
     });
     const beats = notes.reduce((sum, note) => sum + note.beats, 0);
-    const status = invalid.length ? "invalid" : beats > barCapacity ? "over" : beats < barCapacity ? "under" : "complete";
+    const status: MeasureStatus = invalid.length ? "invalid" : beats > barCapacity ? "over" : beats < barCapacity ? "under" : "complete";
     return { notes, beats, invalid, status };
   });
+  const first = measures[0];
+  const last = measures.at(-1);
+  const hasComplementaryEdges = measures.length > 1 && first.status === "under" && last?.status === "under" && first.beats > 0 && last.beats > 0 && Math.abs(first.beats + last.beats - barCapacity) < .0001;
+  if (hasComplementaryEdges && last) {
+    first.status = "pickup";
+    last.status = "outro";
+  }
+  return measures;
 }
 
 function restsFor(beats: number) {
@@ -206,8 +215,11 @@ export default function Home() {
     return systems;
   }, [measures]);
   const totalBeats = notes.reduce((sum, note) => sum + note.beats, 0);
-  const allComplete = measures.length > 0 && measures.every(measure => measure.status === "complete");
+  const allComplete = measures.length > 0 && measures.every(measure => ["complete", "pickup", "outro"].includes(measure.status));
   const hasBlockingErrors = measures.some(measure => measure.status === "over" || measure.status === "invalid");
+  const [signatureCount, signatureUnit] = timeSignature.split("/").map(Number);
+  const hasPickupPair = measures.some(measure => measure.status === "pickup");
+  const rhythmExpectation = `${signatureCount} ${signatureUnit === 4 ? "quarter" : signatureUnit === 8 ? "eighth" : `${signatureUnit}th`}-note beats per full bar`;
   const atBarBoundary = /\|\s*$/.test(notation);
   const canDotLast = /\/(?:1|2|4|8|16)(?!\.)(?=\s*$)/.test(notation);
   const canTieLast = /(?:[A-G](?:#|b)?\d|\[[^\]]+\]|[A-Za-z][A-Za-z0-9_+#-]*)\/(?:1|2|4|8|16|32)\.?(?=\s*$)/.test(notation) && !/(?:^|\s)r\/(?:1|2|4|8|16|32)\.?$/i.test(notation.trim()) && !/~\s*$/.test(notation);
@@ -432,7 +444,7 @@ export default function Home() {
           <div className="scoreScroll">
             <EngravedScore measures={measures} active={active} bpm={bpm} timeSignature={timeSignature} keySignature={keySignature} />
           </div>
-            <div className="measureStatus"><span>{measures.length} {measures.length === 1 ? "measure" : "measures"}</span><span>{totalBeats} beats</span><span className={allComplete ? "valid" : "warning"}>{allComplete ? "OK Every bar has 4 beats" : hasBlockingErrors ? "! Fix highlighted bars" : "- Complete the open bars"}</span></div>
+            <div className="measureStatus"><span>{measures.length} {measures.length === 1 ? "measure" : "measures"}</span><span>{totalBeats} quarter-note beats</span><span className={allComplete ? "valid" : "warning"}>{allComplete ? hasPickupPair ? "OK Valid pickup and outro" : `OK Valid ${timeSignature} rhythm` : hasBlockingErrors ? "! Fix highlighted bars" : "- Complete the open bars"}</span></div>
         </section>
 
         <section className="editor">
@@ -447,7 +459,7 @@ export default function Home() {
             <button className="finishBar" onClick={completeBar} disabled={hasBlockingErrors || atBarBoundary}>Finish bar&nbsp; |</button>
           </div>
           <div className="barFeedback" id="bar-feedback" aria-live="polite">
-              <div className="barChips">{measures.map((measure, index) => <span key={index} className={measure.status}>{measure.status === "complete" ? "OK" : measure.status === "under" ? `${barCapacity - measure.beats} beat${barCapacity - measure.beats === 1 ? "" : "s"} missing` : measure.status === "over" ? `${measure.beats - barCapacity} beat${measure.beats - barCapacity === 1 ? "" : "s"} over` : `Invalid: ${measure.invalid.join(", ")}`}<small>Bar {index + 1}</small></span>)}</div>
+              <div><div className="rhythmRule"><b>{timeSignature} validator</b><span>{rhythmExpectation}. A partial first and last bar are valid when they add up to one full bar ({barCapacity} quarter-note beats).</span></div><div className="barChips">{measures.map((measure, index) => <span key={index} className={measure.status}>{measure.status === "complete" ? `${measure.beats}/${barCapacity} OK` : measure.status === "pickup" ? `${measure.beats}/${barCapacity} pickup` : measure.status === "outro" ? `${measure.beats}/${barCapacity} outro` : measure.status === "under" ? `${measure.beats}/${barCapacity}; ${barCapacity - measure.beats} missing` : measure.status === "over" ? `${measure.beats}/${barCapacity}; ${measure.beats - barCapacity} over` : `Invalid: ${measure.invalid.join(", ")}`}<small>Bar {index + 1}</small></span>)}</div></div>
             {!allComplete && !hasBlockingErrors && <button onClick={completeAllBars}>Fill missing beats with rests</button>}
           </div>
         </section>
