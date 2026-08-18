@@ -3,7 +3,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type Note = { raw: string; pitches: string[]; duration: number; dotted: boolean; tied: boolean; beats: number; measure: number; midis: number[] };
+type TupletRatio = { actual: number; normal: number };
+type Note = { raw: string; pitches: string[]; duration: number; dotted: boolean; tied: boolean; tuplet?: TupletRatio; beats: number; measure: number; midis: number[] };
 type MeasureStatus = "complete" | "pickup" | "outro" | "under" | "over" | "invalid";
 type Measure = { notes: Note[]; beats: number; invalid: string[]; status: MeasureStatus };
 type ChordDefinition = { name: string; pitches: string[] };
@@ -48,11 +49,12 @@ function parseComposition(input: string, barCapacity: number, chords: Record<str
   const measures = barStrings.map((bar, measure): Measure => {
     const invalid: string[] = [];
     const notes = bar.trim().split(/\s+/).filter(Boolean).flatMap((raw): Note[] => {
-      const match = raw.match(/^(.+)\/(1|2|4|8|16|32)(\.)?(~)?$/);
+      const match = raw.match(/^(.+)\/(1|2|4|8|16|32)(t|\*([2-9]):([1-8]))?(\.)?(~)?$/);
       if (!match) { invalid.push(raw); return []; }
       const duration = Number(match[2]);
-      const dotted = Boolean(match[3]);
-      const tied = Boolean(match[4]);
+      const tuplet = match[3] ? (match[3] === "t" ? { actual: 3, normal: 2 } : { actual: Number(match[4]), normal: Number(match[5]) }) : undefined;
+      const dotted = Boolean(match[6]);
+      const tied = Boolean(match[7]);
       const source = match[1];
       const rest = source.toLowerCase() === "r";
       if (rest && tied) { invalid.push(raw); return []; }
@@ -62,10 +64,18 @@ function parseComposition(input: string, barCapacity: number, chords: Record<str
       else if (!rest && chords[source]) pitches = chords[source];
       else if (!rest) { invalid.push(raw); return []; }
       const midis = pitches.map(pitchToMidi).filter((midi): midi is number => midi !== null);
-      return [{ raw, pitches, duration, dotted, tied, beats: (4 / duration) * (dotted ? 1.5 : 1), measure, midis }];
+      return [{ raw, pitches, duration, dotted, tied, tuplet, beats: (4 / duration) * (dotted ? 1.5 : 1) * (tuplet ? tuplet.normal / tuplet.actual : 1), measure, midis }];
     });
+    for (let index = 0; index < notes.length;) {
+      const ratio = notes[index].tuplet;
+      if (!ratio) { index++; continue; }
+      let count = 0;
+      while (index + count < notes.length && notes[index + count].tuplet?.actual === ratio.actual && notes[index + count].tuplet?.normal === ratio.normal) count++;
+      if (count % ratio.actual !== 0) invalid.push(`incomplete ${ratio.actual}:${ratio.normal} tuplet`);
+      index += count;
+    }
     const beats = notes.reduce((sum, note) => sum + note.beats, 0);
-    const status: MeasureStatus = invalid.length ? "invalid" : beats > barCapacity ? "over" : beats < barCapacity ? "under" : "complete";
+    const status: MeasureStatus = invalid.length ? "invalid" : beats - barCapacity > .0001 ? "over" : barCapacity - beats > .0001 ? "under" : "complete";
     return { notes, beats, invalid, status };
   });
   const first = measures[0];
@@ -98,12 +108,23 @@ function tone(ctx: AudioContext, midi: number, start: number, length: number) {
   osc.start(start); osc.stop(start + length);
 }
 
+function metronomeClick(ctx: AudioContext, start: number, accented: boolean) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "square";
+  osc.frequency.setValueAtTime(accented ? 1500 : 1050, start);
+  gain.gain.setValueAtTime(accented ? .22 : .11, start);
+  gain.gain.exponentialRampToValueAtTime(.0001, start + .045);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(start); osc.stop(start + .05);
+}
+
 function EngravedScore({ measures, active, bpm, timeSignature, keySignature }: { measures: Measure[]; active: number; bpm: number; timeSignature: string; keySignature: string }) {
   const scoreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void import("vexflow").then(({ Accidental, Barline, Beam, Dot, Formatter, Fraction, Renderer, Stave, StaveNote, StaveTie, Voice }) => {
+    void import("vexflow").then(({ Accidental, Barline, Beam, Dot, Formatter, Fraction, Renderer, Stave, StaveNote, StaveTie, Tuplet, Voice }) => {
       if (cancelled || !scoreRef.current) return;
       const host = scoreRef.current;
       host.replaceChildren();
@@ -148,6 +169,14 @@ function EngravedScore({ measures, active, bpm, timeSignature, keySignature }: {
             return staveNote;
           });
           try {
+            const tuplets: InstanceType<typeof Tuplet>[] = [];
+            for (let noteIndex = 0; noteIndex < measure.notes.length;) {
+              const ratio = measure.notes[noteIndex].tuplet;
+              if (!ratio) { noteIndex++; continue; }
+              const group = vexNotes.slice(noteIndex, noteIndex + ratio.actual);
+              if (group.length === ratio.actual) tuplets.push(new Tuplet(group, { numNotes: ratio.actual, notesOccupied: ratio.normal, ratioed: ratio.actual !== 3 || ratio.normal !== 2 }));
+              noteIndex += ratio.actual;
+            }
             const [numBeats, beatValue] = timeSignature.split("/").map(Number);
             const voice = new Voice({ numBeats, beatValue }).setMode(Voice.Mode.SOFT).addTickables(vexNotes);
             Accidental.applyAccidentals([voice], keySignature);
@@ -155,6 +184,7 @@ function EngravedScore({ measures, active, bpm, timeSignature, keySignature }: {
             new Formatter().joinVoices([voice]).formatToStave([voice], stave, { stave, context, alignRests: true });
             voice.draw(context, stave);
             beams.forEach(beam => beam.setContext(context).draw());
+            tuplets.forEach(tuplet => tuplet.setContext(context).draw());
             pendingTies.forEach(tie => tie.setContext(context).draw());
           } catch {
             renderFailed = true;
@@ -187,6 +217,7 @@ export default function Home() {
   const [active, setActive] = useState(-1);
   const [help, setHelp] = useState(false);
   const [loop, setLoop] = useState(false);
+  const [metronome, setMetronome] = useState(false);
   const [saved, setSaved] = useState(true);
   const [fileMessage, setFileMessage] = useState("");
   const [saveAsOpen, setSaveAsOpen] = useState(false);
@@ -221,8 +252,8 @@ export default function Home() {
   const hasPickupPair = measures.some(measure => measure.status === "pickup");
   const rhythmExpectation = `${signatureCount} ${signatureUnit === 4 ? "quarter" : signatureUnit === 8 ? "eighth" : `${signatureUnit}th`}-note beats per full bar`;
   const atBarBoundary = /\|\s*$/.test(notation);
-  const canDotLast = /\/(?:1|2|4|8|16)(?!\.)(?=\s*$)/.test(notation);
-  const canTieLast = /(?:[A-G](?:#|b)?\d|\[[^\]]+\]|[A-Za-z][A-Za-z0-9_+#-]*)\/(?:1|2|4|8|16|32)\.?(?=\s*$)/.test(notation) && !/(?:^|\s)r\/(?:1|2|4|8|16|32)\.?$/i.test(notation.trim()) && !/~\s*$/.test(notation);
+  const canDotLast = /\/(?:1|2|4|8|16)(?:t|\*[2-9]:[1-8])?(?!\.)(?=\s*$)/.test(notation);
+  const canTieLast = /(?:[A-G](?:#|b)?\d|\[[^\]]+\]|[A-Za-z][A-Za-z0-9_+#-]*)\/(?:1|2|4|8|16|32)(?:t|\*[2-9]:[1-8])?\.?(?=\s*$)/.test(notation) && !/(?:^|\s)r\/(?:1|2|4|8|16|32)(?:t|\*[2-9]:[1-8])?\.?$/i.test(notation.trim()) && !/~\s*$/.test(notation);
 
   useEffect(() => { loopRef.current = loop; }, [loop]);
   useEffect(() => {
@@ -271,8 +302,17 @@ export default function Home() {
     const ctx = new AudioContext();
     audio.current = ctx;
     const secondPerBeat = 60 / Math.min(220, Math.max(40, bpm));
+    const denominatorBeat = 4 / signatureUnit;
     let cursor = 0;
     setPlaying(true);
+    if (metronome) {
+      let measureStart = 0;
+      measures.forEach(measure => {
+        const clickCount = Math.ceil((measure.beats - .0001) / denominatorBeat);
+        for (let beat = 0; beat < clickCount; beat++) metronomeClick(ctx, ctx.currentTime + measureStart + beat * denominatorBeat * secondPerBeat + .04, beat === 0);
+        measureStart += measure.beats * secondPerBeat;
+      });
+    }
     notes.forEach((note, index) => {
       const length = note.beats * secondPerBeat;
       const previousNote = notes[index - 1];
@@ -325,7 +365,7 @@ export default function Home() {
   const dotLast = () => {
     if (!canDotLast) return;
     setSaved(false);
-    setNotation(current => current.replace(/(\/(?:1|2|4|8|16))(?=\s*$)/, "$1."));
+    setNotation(current => current.replace(/(\/(?:1|2|4|8|16)(?:t|\*[2-9]:[1-8])?)(?=\s*$)/, "$1."));
   };
   const tieLast = () => {
     if (!canTieLast) return;
@@ -418,11 +458,12 @@ export default function Home() {
                 <section><h3>1. Write notes</h3><p>Enter a pitch, octave, slash, and duration. Separate events with spaces.</p><div className="guideExamples"><code>C4/4</code><span>quarter-note middle C</span><code>F#4/8</code><span>eighth-note F sharp</span><code>Bb3/2</code><span>half-note B flat</span></div></section>
                 <section><h3>2. Durations and bars</h3><p>Use <code>/1</code>, <code>/2</code>, <code>/4</code>, <code>/8</code>, <code>/16</code>, or <code>/32</code>. Type <code>|</code> between measures. Bar indicators report missing or extra beats.</p></section>
                 <section><h3>3. Rests, dots, and ties</h3><div className="guideExamples"><code>r/4</code><span>quarter rest</span><code>C4/4.</code><span>dotted quarter note</span><code>C4/4~ C4/4</code><span>tie matching pitches</span></div><p>The Dot last and Tie last buttons can append these marks for you.</p></section>
-                <section><h3>4. Chords</h3><p>Define a reusable chord on its own line, then reference its name in the score.</p><div className="guideExamples wide"><code>AM = [A3,E4,A4,C#5,E5]</code><span>definition</span><code>AM/4</code><span>quarter-note A major chord</span></div><p>You can also write a chord inline: <code>[C4,E4,G4]/2</code>.</p></section>
-                <section><h3>5. Score settings</h3><p>Choose a time signature and key signature above the score. Notely recalculates bar completeness and redraws accidentals automatically.</p></section>
-                <section><h3>6. Playback</h3><p>Set the tempo, choose Play from start, and optionally enable Loop. Tied notes sustain as one sound.</p></section>
-                <section><h3>7. Songs and files</h3><p>Use New song and the song tabs to work on several pieces. Save as downloads a named <code>.txt</code> shorthand file; Open .txt restores one. Work is also saved on this device.</p></section>
-                <section><h3>8. Print or PDF</h3><p>Choose Print / PDF to open the browser print dialog. Select a printer, or choose Save as PDF for a portable score.</p></section>
+                <section><h3>4. Triplets and other tuplets</h3><div className="guideExamples wide"><code>C4/8t D4/8t E4/8t</code><span>three eighths in the time of two</span><code>C4/16*5:4 ... G4/16*5:4</code><span>five sixteenths in the time of four</span></div><p>Use <code>t</code> for a 3:2 triplet, or <code>*actual:normal</code> for ratios from 2 through 9. Complete each tuplet group inside one bar.</p></section>
+                <section><h3>5. Chords</h3><p>Define a reusable chord on its own line, then reference its name in the score.</p><div className="guideExamples wide"><code>AM = [A3,E4,A4,C#5,E5]</code><span>definition</span><code>AM/4</code><span>quarter-note A major chord</span></div><p>You can also write a chord inline: <code>[C4,E4,G4]/2</code>.</p></section>
+                <section><h3>6. Score settings</h3><p>Choose a time signature and key signature above the score. Notely recalculates bar completeness and redraws accidentals automatically.</p></section>
+                <section><h3>7. Playback and metronome</h3><p>Set the tempo, choose Play from start, and optionally enable Loop or Metronome. The click follows the time-signature denominator and accents the first beat of every measure.</p></section>
+                <section><h3>8. Songs and files</h3><p>Use New song and the song tabs to work on several pieces. Save as downloads a named <code>.txt</code> shorthand file; Open .txt restores one. Work is also saved on this device.</p></section>
+                <section><h3>9. Print or PDF</h3><p>Choose Print / PDF to open the browser print dialog. Select a printer, or choose Save as PDF for a portable score.</p></section>
               </div>
               <footer><b>Quick example</b><code>E4/8 F#4/8 G4/4 B4/4 A4/4 | r/4 E4/4. G4/8 B4/4</code><button onClick={() => setHelp(false)}>Start composing</button></footer>
             </aside>
@@ -448,7 +489,7 @@ export default function Home() {
         </section>
 
         <section className="editor">
-          <label htmlFor="notation"><span>Your shorthand</span><span className="syntax">Pitch + octave / duration</span></label>
+          <label htmlFor="notation"><span>Your shorthand</span><span className="syntax">Pitch + octave / duration / optional tuplet</span></label>
             {fileMessage && <div className="fileMessage" role="status"><span>{fileMessage}</span><button onClick={() => setFileMessage("")} aria-label="Dismiss file message">X</button></div>}
           <textarea id="notation" value={notation} onChange={event => changeNotation(event.target.value)} spellCheck={false} aria-describedby="bar-feedback"/>
           <div className="quickKeys">
@@ -456,6 +497,8 @@ export default function Home() {
               <button className="dotLast" onClick={dotLast} disabled={!canDotLast}>. Dot last</button>
               <button className="tieLast" onClick={tieLast} disabled={!canTieLast}>~ Tie last</button>
             <button onClick={() => insert("[C4,E4,G4]/4")}>C chord</button>
+            <button onClick={() => insert("C4/8t D4/8t E4/8t")}>3:2 triplet</button>
+            <button onClick={() => insert("C4/16*5:4 D4/16*5:4 E4/16*5:4 F4/16*5:4 G4/16*5:4")}>5:4 tuplet</button>
             <button className="finishBar" onClick={completeBar} disabled={hasBlockingErrors || atBarBoundary}>Finish bar&nbsp; |</button>
           </div>
           <div className="barFeedback" id="bar-feedback" aria-live="polite">
@@ -477,9 +520,11 @@ export default function Home() {
       <footer className="transport">
           <div className="tempo"><label htmlFor="tempo">Tempo</label><button onClick={() => { setSaved(false); setBpm(Math.max(40,bpm-1)); }} aria-label="Decrease tempo">-</button><input id="tempo" type="number" min="40" max="220" value={bpm} onChange={event => { setSaved(false); setBpm(Math.min(220, Math.max(40, Number(event.target.value)))); }}/><button onClick={() => { setSaved(false); setBpm(Math.min(220,bpm+1)); }} aria-label="Increase tempo">+</button><span>BPM</span></div>
           <button className="play" onClick={play} disabled={!notes.length}><span>{playing ? "STOP" : "PLAY"}</span>{playing ? "Stop" : "Play from start"}</button>
-          <button className={`loop ${loop ? "selected" : ""}`} onClick={() => setLoop(value => !value)} aria-label={`${loop ? "Disable" : "Enable"} loop playback`} aria-pressed={loop}>Loop</button>
+          <div className="transportOptions">
+            <button className={`metronome ${metronome ? "selected" : ""}`} onClick={() => setMetronome(value => !value)} aria-label={`${metronome ? "Disable" : "Enable"} metronome`} aria-pressed={metronome}>Click</button>
+            <button className={`loop ${loop ? "selected" : ""}`} onClick={() => setLoop(value => !value)} aria-label={`${loop ? "Disable" : "Enable"} loop playback`} aria-pressed={loop}>Loop</button>
+          </div>
       </footer>
     </main>
   );
 }
-
