@@ -21,6 +21,10 @@ function beatsPerBar(signature: string) {
   return count * (4 / unit);
 }
 
+function formatBeats(value: number) {
+  return Math.round(value * 1000) / 1000;
+}
+
 function pitchToMidi(pitch: string) {
   const match = pitch.match(/^([A-G])([#b]?)(\d)$/);
   if (!match) return null;
@@ -485,7 +489,7 @@ export default function Home() {
           <div className="scoreScroll">
             <EngravedScore measures={measures} active={active} bpm={bpm} timeSignature={timeSignature} keySignature={keySignature} />
           </div>
-            <div className="measureStatus"><span>{measures.length} {measures.length === 1 ? "measure" : "measures"}</span><span>{totalBeats} quarter-note beats</span><span className={allComplete ? "valid" : "warning"}>{allComplete ? hasPickupPair ? "OK Valid pickup and outro" : `OK Valid ${timeSignature} rhythm` : hasBlockingErrors ? "! Fix highlighted bars" : "- Complete the open bars"}</span></div>
+            <div className="measureStatus"><span>{measures.length} {measures.length === 1 ? "measure" : "measures"}</span><span>{formatBeats(totalBeats)} quarter-note beats</span><span className={allComplete ? "valid" : "warning"}>{allComplete ? hasPickupPair ? "OK Valid pickup and outro" : `OK Valid ${timeSignature} rhythm` : hasBlockingErrors ? "! Fix highlighted bars" : "- Complete the open bars"}</span></div>
         </section>
 
         <section className="editor">
@@ -502,7 +506,7 @@ export default function Home() {
             <button className="finishBar" onClick={completeBar} disabled={hasBlockingErrors || atBarBoundary}>Finish bar&nbsp; |</button>
           </div>
           <div className="barFeedback" id="bar-feedback" aria-live="polite">
-              <div><div className="rhythmRule"><b>{timeSignature} validator</b><span>{rhythmExpectation}. A partial first and last bar are valid when they add up to one full bar ({barCapacity} quarter-note beats).</span></div><div className="barChips">{measures.map((measure, index) => <span key={index} className={measure.status}>{measure.status === "complete" ? `${measure.beats}/${barCapacity} OK` : measure.status === "pickup" ? `${measure.beats}/${barCapacity} pickup` : measure.status === "outro" ? `${measure.beats}/${barCapacity} outro` : measure.status === "under" ? `${measure.beats}/${barCapacity}; ${barCapacity - measure.beats} missing` : measure.status === "over" ? `${measure.beats}/${barCapacity}; ${measure.beats - barCapacity} over` : `Invalid: ${measure.invalid.join(", ")}`}<small>Bar {index + 1}</small></span>)}</div></div>
+              <div><div className="rhythmRule"><b>{timeSignature} validator</b><span>{rhythmExpectation}. A partial first and last bar are valid when they add up to one full bar ({formatBeats(barCapacity)} quarter-note beats).</span></div><div className="barChips">{measures.map((measure, index) => <span key={index} className={measure.status}>{measure.status === "complete" ? `${formatBeats(measure.beats)}/${formatBeats(barCapacity)} OK` : measure.status === "pickup" ? `${formatBeats(measure.beats)}/${formatBeats(barCapacity)} pickup` : measure.status === "outro" ? `${formatBeats(measure.beats)}/${formatBeats(barCapacity)} outro` : measure.status === "under" ? `${formatBeats(measure.beats)}/${formatBeats(barCapacity)}; ${formatBeats(barCapacity - measure.beats)} missing` : measure.status === "over" ? `${formatBeats(measure.beats)}/${formatBeats(barCapacity)}; ${formatBeats(measure.beats - barCapacity)} over` : `Invalid: ${measure.invalid.join(", ")}`}<small>Bar {index + 1}</small></span>)}</div></div>
             {!allComplete && !hasBlockingErrors && <button onClick={completeAllBars}>Fill missing beats with rests</button>}
           </div>
         </section>
